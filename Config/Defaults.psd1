@@ -14,5 +14,6 @@
         Backups     = 1.7
         Jobs        = 1.1
         Performance = 1.4
+        ErrorLog    = 1.0
     }
 }
