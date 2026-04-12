@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "6.2.1",
+  "run": {
+    "RunId": "mock-run-v6.2.1",
+    "Instances": [
+      "localhost"
+    ],
+    "GeneratedAt": "2026-03-29T19:00:00-07:00",
+    "Mode": "Tighten pass"
+  },
+  "score": {
+    "OverallScore": 90.2,
+    "TotalFindings": 24,
+    "CriticalCount": 2,
+    "WarningCount": 3,
+    "UnknownCount": 0,
+    "HealthyCount": 14,
+    "InfoCount": 5
+  },
+  "findings": [
+    {
+      "CheckId": "INST-CONNECT",
+      "TargetName": "localhost",
+      "State": "Healthy",
+      "Message": "Connected to localhost."
+    },
+    {
+      "CheckId": "JOB-FAILURES",
+      "TargetName": "syspolicy_purge_history",
+      "State": "Info",
+      "Message": "Job has no recorded run history yet."
+    },
+    {
+      "CheckId": "BACKUP-LAST-LOG",
+      "TargetName": "TestDB",
+      "State": "Critical",
+      "Message": "No log backup found for FULL recovery database."
+    }
+  ]
+}
