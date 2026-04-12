@@ -1,33 +1,64 @@
+
 function Invoke-SqlTechnicalSanity {
+    [CmdletBinding()]
     param(
-        [string]$SqlInstance,
-        [string]$OutputDirectory,
+        [Parameter(Mandatory)][string[]]$SqlInstance,
+        [PSCredential]$SqlCredential,
+        [string]$OutputDirectory = '.',
         [switch]$PassThru
     )
 
-    $findings = @()
+    $settings = Import-PowerShellDataFile -Path (Join-Path $script:ModuleRoot 'Config\Defaults.psd1')
+    $run = Initialize-StsRun -SqlInstance $SqlInstance -SqlCredential $SqlCredential -Settings $settings
+    $registry = Get-StsCheckRegistry
+    $allFindings = New-Object System.Collections.Generic.List[object]
 
-    $findings += Invoke-StsCollectorInstance
+    foreach ($instance in $SqlInstance) {
+        $context = @{
+            RunId         = $run.RunId
+            InstanceName  = $instance
+            SqlCredential = $SqlCredential
+            Settings      = $settings.Thresholds
+            HasDbatools   = $run.HasDbatools
+        }
 
-    $score = Get-StsScores -Findings $findings
+        foreach ($check in $registry) {
+            $fn = Get-Command -Name $check.Function -ErrorAction SilentlyContinue
+            if (-not $fn) {
+                $allFindings.Add(
+                    (New-StsFinding -RunId $run.RunId -Collector $check.Collector -Category $check.Category `
+                        -CheckId $check.CheckId -CheckName $check.CheckName -TargetType 'Instance' -TargetName $instance `
+                        -InstanceName $instance -State 'Unknown' -Severity 'High' -Weight $check.Weight `
+                        -Message ("Collector function missing: {0}" -f $check.Function) -Evidence @{} `
+                        -Recommendation 'Fix module packaging.' -Source 'engine')
+                )
+                continue
+            }
 
-    $jsonPath = Join-Path $OutputDirectory "report.json"
-    $htmlPath = Join-Path $OutputDirectory "report.html"
+            $collectorResult = Invoke-StsFailSoft -Check $check -Context $context -ScriptBlock {
+                & $check.Function -Context $context -Check $check
+            }
 
-    $data = [pscustomobject]@{
-        findings = $findings
-        score = $score
+            foreach ($item in @($collectorResult)) {
+                $allFindings.Add($item)
+            }
+        }
     }
 
-    $data | ConvertTo-Json -Depth 5 | Set-Content $jsonPath
-
-    "<html><body><h1>Score: $($score.OverallScore)</h1></body></html>" | Set-Content $htmlPath
+    $score = Get-StsScores -Findings $allFindings.ToArray() -Settings $settings
+    $html = ConvertTo-SqlTechnicalSanityHtml -Run $run -Findings $allFindings.ToArray() -Score $score
+    $json = ConvertTo-SqlTechnicalSanityJson -Run $run -Findings $allFindings.ToArray() -Score $score
+    $export = Export-SqlTechnicalSanityReport -Run $run -Html $html -Json $json -OutputDirectory $OutputDirectory
 
     if ($PassThru) {
         [pscustomobject]@{
-            Score = $score
-            JsonPath = $jsonPath
-            HtmlPath = $htmlPath
+            Run      = $run
+            Findings = $allFindings.ToArray()
+            Score    = $score
+            HtmlPath = $export.HtmlPath
+            JsonPath = $export.JsonPath
         }
+    } else {
+        $export
     }
 }
