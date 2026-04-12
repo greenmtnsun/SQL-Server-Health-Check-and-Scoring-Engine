@@ -1,0 +1,15 @@
+Replace these files in your module:
+- SqlTechnicalSanity.psd1
+- SqlTechnicalSanity.psm1
+- Public\ConvertTo-SqlTechnicalSanityHtml.ps1
+- Public\Compare-SqlTechnicalSanityBaseline.ps1
+- Public\Get-SqlTechnicalSanityExecutiveSummary.ps1
+- Public\Invoke-SqlTechnicalSanityFleetRollup.ps1
+- Public\Export-SqlTechnicalSanityFleetRollupHtml.ps1
+
+Then re-import and run:
+$baseline = "C:\SYSADMIN\DATA\SqlTechnicalSanity-20260330-172330.json"
+$result = Invoke-SqlTechnicalSanity -SqlInstance localhost -OutputDirectory "C:\SYSADMIN\DATA" -PassThru
+$cmp = Compare-SqlTechnicalSanityBaseline -CurrentJsonPath $result.JsonPath -BaselineJsonPath $baseline
+$fleet = Invoke-SqlTechnicalSanityFleetRollup -JsonFolder "C:\SYSADMIN\DATA"
+Export-SqlTechnicalSanityFleetRollupHtml -FleetRows $fleet -OutputPath "C:\SYSADMIN\DATA\SqlTechnicalSanity-FleetRollup.html"

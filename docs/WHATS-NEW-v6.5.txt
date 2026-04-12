@@ -1,0 +1,1 @@
+v6.5 adds a redesigned main HTML report, richer fleet rollup HTML, top regressions from baseline compare, and preserves all prior manual fixes in code.
