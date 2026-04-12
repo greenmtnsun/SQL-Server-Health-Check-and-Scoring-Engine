@@ -1,5 +1,15 @@
-# SQL-Server-Health-Check-and-Scoring-Engine
 
-Measure SQL Server health — don’t just list problems.
+# SqlTechnicalSanity v6.2.1
 
-A PowerShell framework that evaluates SQL Server using a scoring model.
+This is a tightening pass on v6.2.
+
+Changes:
+- INST-CONNECT no longer relies on Connect-DbaInstance
+- job collector handles no-history jobs without false critical failures
+- FILELIST.txt added
+- Test-SqlTechnicalSanityPackage added to verify all expected files are present
+
+Goal:
+- keep the working v6.2 framework
+- reduce false positives
+- make package completeness easy to verify

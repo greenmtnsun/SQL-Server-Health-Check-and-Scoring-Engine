@@ -1,0 +1,10 @@
+Merged package strategy:
+- Base: SqlTechnicalSanity-Most Likely ALL.zip
+- Preserved all files from that package
+- Added unique file missing from prior merged package:
+  - Public\Get-SqlTechnicalSanityThresholds.ps1
+- Overlaid safer later versions for:
+  - Public\Invoke-SqlTechnicalSanity.ps1
+  - Example-Run.ps1
+- Preserved Test-SqlTechnicalSanityPackage export
+- Preserved extra mock/docs/files present in Most Likely ALL

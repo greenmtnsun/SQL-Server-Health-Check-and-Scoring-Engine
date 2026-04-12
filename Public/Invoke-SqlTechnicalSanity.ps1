@@ -5,13 +5,19 @@ function Invoke-SqlTechnicalSanity {
         [Parameter(Mandatory)][string[]]$SqlInstance,
         [PSCredential]$SqlCredential,
         [string]$OutputDirectory = '.',
-        [switch]$PassThru
+        [switch]$PassThru,
+        [string]$BaselineJsonPath
     )
 
-    $settings = Import-PowerShellDataFile -Path (Join-Path $script:ModuleRoot 'Config\Defaults.psd1')
+    try {
+        $settings = Get-StsSettings
+    } catch {
+        throw "Failed to load settings. $($_.Exception.Message)"
+    }
+
     $run = Initialize-StsRun -SqlInstance $SqlInstance -SqlCredential $SqlCredential -Settings $settings
     $registry = Get-StsCheckRegistry
-    $allFindings = New-Object System.Collections.Generic.List[object]
+    $allFindings = New-Object 'System.Collections.Generic.List[object]'
 
     foreach ($instance in $SqlInstance) {
         $context = @{
@@ -19,6 +25,7 @@ function Invoke-SqlTechnicalSanity {
             InstanceName  = $instance
             SqlCredential = $SqlCredential
             Settings      = $settings.Thresholds
+            FullSettings  = $settings
             HasDbatools   = $run.HasDbatools
         }
 
@@ -26,11 +33,22 @@ function Invoke-SqlTechnicalSanity {
             $fn = Get-Command -Name $check.Function -ErrorAction SilentlyContinue
             if (-not $fn) {
                 $allFindings.Add(
-                    (New-StsFinding -RunId $run.RunId -Collector $check.Collector -Category $check.Category `
-                        -CheckId $check.CheckId -CheckName $check.CheckName -TargetType 'Instance' -TargetName $instance `
-                        -InstanceName $instance -State 'Unknown' -Severity 'High' -Weight $check.Weight `
-                        -Message ("Collector function missing: {0}" -f $check.Function) -Evidence @{} `
-                        -Recommendation 'Fix module packaging.' -Source 'engine')
+                    (New-StsFinding `
+                        -RunId $run.RunId `
+                        -Collector $check.Collector `
+                        -Category $check.Category `
+                        -CheckId $check.CheckId `
+                        -CheckName $check.CheckName `
+                        -TargetType 'Instance' `
+                        -TargetName $instance `
+                        -InstanceName $instance `
+                        -State 'Unknown' `
+                        -Severity 'High' `
+                        -Weight $check.Weight `
+                        -Message "Collector function missing: $($check.Function)" `
+                        -Evidence @{} `
+                        -Recommendation 'Fix module packaging.' `
+                        -Source 'engine')
                 )
                 continue
             }
@@ -45,15 +63,30 @@ function Invoke-SqlTechnicalSanity {
         }
     }
 
-    $score = Get-StsScores -Findings $allFindings.ToArray() -Settings $settings
-    $html = ConvertTo-SqlTechnicalSanityHtml -Run $run -Findings $allFindings.ToArray() -Score $score
-    $json = ConvertTo-SqlTechnicalSanityJson -Run $run -Findings $allFindings.ToArray() -Score $score
-    $export = Export-SqlTechnicalSanityReport -Run $run -Html $html -Json $json -OutputDirectory $OutputDirectory
+    $findingsArray = @($allFindings.ToArray())
+
+    $score = Get-StsScores -Findings $findingsArray -Settings $settings
+    $html = ConvertTo-SqlTechnicalSanityHtml `
+        -Run $run `
+        -Findings $findingsArray `
+        -Score $score `
+        -BaselineJsonPath $BaselineJsonPath
+
+    $json = ConvertTo-SqlTechnicalSanityJson `
+        -Run $run `
+        -Findings $findingsArray `
+        -Score $score
+
+    $export = Export-SqlTechnicalSanityReport `
+        -Run $run `
+        -Html $html `
+        -Json $json `
+        -OutputDirectory $OutputDirectory
 
     if ($PassThru) {
         [pscustomobject]@{
             Run      = $run
-            Findings = $allFindings.ToArray()
+            Findings = $findingsArray
             Score    = $score
             HtmlPath = $export.HtmlPath
             JsonPath = $export.JsonPath
