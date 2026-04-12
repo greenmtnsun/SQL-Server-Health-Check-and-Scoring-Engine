@@ -7,7 +7,6 @@
         Unknown  = 0.5
         Ignored  = 0
     }
-
     DomainWeights = @{
         Instance    = 1.0
         Databases   = 1.3
