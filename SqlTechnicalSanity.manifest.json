@@ -1,0 +1,31 @@
+{
+  "ModuleName": "SqlTechnicalSanity",
+  "ModuleVersion": "6.9.0",
+  "BuildLabel": "full-engine-versioned-rootfixed-2026-04-15",
+  "BuildDate": "2026-04-15T00:00:00-07:00",
+  "ExpectedFileCount": 62,
+  "RequiredFiles": [
+    "SqlTechnicalSanity.psd1",
+    "SqlTechnicalSanity.psm1",
+    "Example-Run.ps1",
+    "Public/Invoke-SqlTechnicalSanity.ps1",
+    "Public/Test-SqlTechnicalSanityPackage.ps1",
+    "Public/Get-SqlTechnicalSanityVersion.ps1",
+    "Private/Core/Invoke-StsQuery.ps1",
+    "Private/Core/New-StsFinding.ps1",
+    "Private/Core/Get-StsSettings.ps1",
+    "Private/Core/Get-StsModuleVersion.ps1",
+    "Config/Defaults.psd1"
+  ],
+  "Hashes": {
+    "SqlTechnicalSanity.psd1": "23ec86f2e7428abb9afe5ea91cd05a04084e9f8135ec3efb3f7b0049ab2ac833",
+    "SqlTechnicalSanity.psm1": "c5162f29cd24e284b68aad19933488062d27b5a5adc2e0485d26856e2e398f79",
+    "Public/Invoke-SqlTechnicalSanity.ps1": "e03f2ec2b56d15dfe63c9e1c72bc4fcf27ca0d250e4a0c745b4ac232460f42f6",
+    "Public/Compare-SqlTechnicalSanityBaseline.ps1": "8d652eb426663f52d88a11bf69f3ac0eb21238278cbb65ed84756bc41a7ad10b",
+    "Public/ConvertTo-SqlTechnicalSanityHtml.ps1": "64ccee209eb903d2126db09b7794c2f32ed3c4d082320f73961a0590c873ca2d",
+    "Private/Core/Invoke-StsQuery.ps1": "5348fc912a2064d37f9f51f33da063765f63a50a52389279743a444a30932da3",
+    "Private/Core/New-StsFinding.ps1": "d0d7ede6c4ced8b2e287fa17d0bddcec1c854297ef374464b3045d944916d6f7",
+    "Private/Core/Get-StsSettings.ps1": "87fc4efa2fbf9142affbf2625cbe13890a3aeadc337bbbf20ba54fd2474ca343",
+    "Public/Test-SqlTechnicalSanityPackage.ps1": "764f5396e41b348fb397254866491b9117bffb63dc2afeb3e97691b0da8a5660"
+  }
+}

@@ -28,3 +28,6 @@ Export-ModuleMember -Function @(
     'Get-SqlTechnicalSanityIgnoreTemplate',
     'Initialize-SqlTechnicalSanityDefaults'
 )
+. "$PSScriptRoot\Private\Core\Get-StsModuleVersion.ps1"
+. "$PSScriptRoot\Public\Test-SqlTechnicalSanityPackage.ps1"
+. "$PSScriptRoot\Public\Get-SqlTechnicalSanityVersion.ps1"

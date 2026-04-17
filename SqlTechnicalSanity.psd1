@@ -1,6 +1,6 @@
 @{
     RootModule        = 'SqlTechnicalSanity.psm1'
-    ModuleVersion     = '6.8.2'
+    ModuleVersion = '6.9.0'
     GUID              = '5d6dd4e6-1401-4aaf-8f57-75da4b2626b8'
     Author            = 'OpenAI'
     CompanyName       = 'OpenAI'
@@ -28,4 +28,13 @@
     CmdletsToExport   = @()
     VariablesToExport = @()
     AliasesToExport   = @()
+
+    PrivateData = @{
+        PSData = @{
+            Prerelease = ''
+            ProjectUri = 'https://github.com/'
+            Tags = @('SQLServer','HealthCheck','PowerShell')
+        }
+    }
+
 }

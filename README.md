@@ -13,3 +13,13 @@ Goal:
 - keep the working v6.2 framework
 - reduce false positives
 - make package completeness easy to verify
+
+## Package validation
+After import, run:
+
+```powershell
+Import-Module .\SqlTechnicalSanity.psd1 -Force
+Test-SqlTechnicalSanityPackage -Verbose
+Get-SqlTechnicalSanityVersion
+```
+

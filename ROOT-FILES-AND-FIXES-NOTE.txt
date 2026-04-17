@@ -1,0 +1,15 @@
+This bundle preserves the richer full package root files:
+- SqlTechnicalSanity.psd1
+- SqlTechnicalSanity.psm1
+- Example-Run.ps1
+- README.md
+- FILELIST.txt
+- MockReport.html
+- MockReport.json
+- Set-SqlTechnicalSanityConfig_v2.ps1
+- Set-SqlTechnicalSanityConfig_v3.ps1
+
+Applied fixes:
+- Invoke-StsQuery now supports both -Context and direct parameters
+- Invoke-StsQuery avoids null SqlCredential issues
+- ErrorLog collector avoids passing null SqlCredential and keeps safe array handling
