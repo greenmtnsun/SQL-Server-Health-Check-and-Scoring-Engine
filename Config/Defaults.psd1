@@ -1,4 +1,4 @@
-﻿@{
+@{
     Thresholds = @{
         FullBackupWarnHours         = 30
         FullBackupWarnDays          = 0
@@ -35,7 +35,7 @@
         Critical = 0.00
         Unknown  = 0.50
         Skipped  = 0.50
-        Ignored  = 
+        Ignored  = 0
     }
 
     DomainWeights = @{
