@@ -1,3 +1,7 @@
+# STS:
+# FileVersion: 1.0.0
+# RequiresModuleVersion: 6.9.0
+
 function Get-StsSettings {
     [CmdletBinding()]
     param()
@@ -5,7 +9,7 @@ function Get-StsSettings {
     $moduleRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     $defaultsPath = Join-Path $moduleRoot 'Config\Defaults.psd1'
 
-    $fallback = @{
+    $settings = @{
         Thresholds = @{
             FullBackupWarnHours         = 30
             FullBackupWarnDays          = 0
@@ -41,7 +45,7 @@ function Get-StsSettings {
             Critical = 0.00
             Unknown  = 0.50
             Skipped  = 0.50
-            Ignored  = $null
+            Ignored  = 0
         }
         DomainWeights = @{
             Instance        = 1.0
@@ -62,25 +66,20 @@ function Get-StsSettings {
         }
     }
 
-    $data = $fallback
-    if (Test-Path -LiteralPath $defaultsPath) {
-        try {
+    try {
+        if (Test-Path -LiteralPath $defaultsPath) {
             $loaded = Import-PowerShellDataFile -LiteralPath $defaultsPath
             if ($loaded) {
-                $data = $loaded
+                $settings = $loaded
             }
-        } catch {
-            $data = $fallback
         }
+    } catch {
+        Write-Warning "Defaults.psd1 could not be parsed. Using built-in fallback defaults."
     }
 
-    if (-not $data.ContainsKey('Thresholds')) { $data.Thresholds = $fallback.Thresholds }
-    if (-not $data.ContainsKey('StateScores')) { $data.StateScores = $fallback.StateScores }
-    if (-not $data.ContainsKey('DomainWeights')) { $data.DomainWeights = $fallback.DomainWeights }
+    if (-not $settings.ContainsKey('Thresholds'))    { $settings['Thresholds']    = @{} }
+    if (-not $settings.ContainsKey('StateScores'))   { $settings['StateScores']   = @{} }
+    if (-not $settings.ContainsKey('DomainWeights')) { $settings['DomainWeights'] = @{} }
 
-    [pscustomobject]@{
-        Thresholds    = $data.Thresholds
-        StateScores   = $data.StateScores
-        DomainWeights = $data.DomainWeights
-    }
+    return $settings
 }
