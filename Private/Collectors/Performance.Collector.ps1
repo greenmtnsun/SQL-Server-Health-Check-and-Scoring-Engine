@@ -1,97 +1,238 @@
+# STS:
+# FileVersion: 1.0.0
+# RequiresModuleVersion: 6.9.0
 
 function Invoke-StsCollectorPerformance {
     [CmdletBinding()]
-    param([hashtable]$Context, [hashtable]$Check)
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Check
+    )
 
-    $cpuWarn = [int]$Context.Settings.CpuRunnableWarn
-    $pleWarn = [int]$Context.Settings.PLEWarn
-    $waitWarn = [int]$Context.Settings.WaitPctWarn
-    $out = New-Object System.Collections.Generic.List[object]
+    $instanceName = [string]$Context.InstanceName
+    $settings = $Context.Settings
+    $cpuRunnableWarn = if ($settings.ContainsKey('CpuRunnableWarn')) { [int]$settings.CpuRunnableWarn } else { 12 }
+    $pleWarn = if ($settings.ContainsKey('PLEWarn')) { [int]$settings.PLEWarn } else { 300 }
+    $waitPctWarn = if ($settings.ContainsKey('WaitPctWarn')) { [double]$settings.WaitPctWarn } else { 40 }
+    $started = Get-Date
+    $findings = New-Object System.Collections.Generic.List[object]
 
-    $qBlock = @"
-SELECT er.session_id, er.blocking_session_id, er.wait_type, er.wait_time, DB_NAME(er.database_id) AS database_name
-FROM sys.dm_exec_requests er
-WHERE er.blocking_session_id <> 0;
+    $snapshotQuery = @"
+SET NOCOUNT ON;
+
+SELECT
+    (SELECT COUNT(*) FROM sys.dm_exec_requests WHERE blocking_session_id <> 0) AS BlockingCount,
+    (SELECT ISNULL(MAX(runnable_tasks_count),0) FROM sys.dm_os_schedulers WHERE status = 'VISIBLE ONLINE') AS MaxRunnableTasks,
+    (
+        SELECT ISNULL(MIN(cntr_value),0)
+        FROM sys.dm_os_performance_counters
+        WHERE counter_name = 'Page life expectancy'
+    ) AS PLE;
 "@
-    $rows = Invoke-StsQuery -SqlInstance $Context.InstanceName -SqlCredential $Context.SqlCredential -Query $qBlock
 
-    if (-not $rows) {
-        $out.Add(
-            (New-StsFinding -RunId $Context.RunId -Collector 'Performance' -Category 'Blocking' -CheckId 'PERF-BLOCKING' -CheckName 'Blocking snapshot' `
-                -TargetType 'Instance' -TargetName $Context.InstanceName -InstanceName $Context.InstanceName -State 'Healthy' -Severity 'Info' -Weight 7 `
-                -Message 'No active blocked requests detected.' -Evidence @{} -Recommendation 'None.' -Source 'tsql')
-        )
-    } else {
-        foreach ($r in $rows) {
-            $out.Add(
-                (New-StsFinding -RunId $Context.RunId -Collector 'Performance' -Category 'Blocking' -CheckId 'PERF-BLOCKING' -CheckName 'Blocking snapshot' `
-                    -TargetType 'Session' -TargetName ("SPID {0}" -f $r.session_id) -InstanceName $Context.InstanceName -State 'Warning' -Severity 'Medium' -Weight 7 `
-                    -Message ("Session {0} is blocked by {1}." -f $r.session_id, $r.blocking_session_id) `
-                    -Evidence @{ WaitType = $r.wait_type; WaitMs = $r.wait_time; Database = $r.database_name } `
-                    -Recommendation 'Find the head blocker and review transaction scope, indexing, and query patterns.' -Source 'tsql')
-            )
+    try {
+        $snapshot = Invoke-StsQuery -Context $Context -Query $snapshotQuery | Select-Object -First 1
+    }
+    catch {
+        $evidence = @{
+            InstanceName    = $Context.InstanceName
+            Error           = $_.Exception.Message
+            CpuRunnableWarn = $cpuRunnableWarn
+            PLEWarn         = $pleWarn
+            WaitPctWarn     = $waitPctWarn
         }
+
+        return New-StsFinding `
+            -RunId $Context.RunId `
+            -Collector 'Performance' `
+            -Category 'Performance' `
+            -CheckId 'PERF-BLOCKING' `
+            -CheckName 'Performance snapshot' `
+            -TargetType 'Instance' `
+            -TargetName $instanceName `
+            -InstanceName $instanceName `
+            -State 'Unknown' `
+            -Severity 'High' `
+            -Weight 8 `
+            -Message 'Performance snapshot query failed.' `
+            -Evidence $evidence `
+            -Recommendation 'Validate DMV access and permissions.' `
+            -Source 'tsql' `
+            -DurationMs ([int]((Get-Date) - $started).TotalMilliseconds) `
+            -ErrorId 'PERF-SNAPSHOT-FAILED' `
+            -ErrorMessage $_.Exception.Message
     }
 
-    try {
-        $sched = Invoke-StsQuery -SqlInstance $Context.InstanceName -SqlCredential $Context.SqlCredential -Query @"
-SELECT MAX(runnable_tasks_count) AS max_runnable_tasks
-FROM sys.dm_os_schedulers
-WHERE status = 'VISIBLE ONLINE';
-"@ | Select-Object -First 1
-        $schedState = if ($sched -and [int]$sched.max_runnable_tasks -gt $cpuWarn) { 'Warning' } else { 'Healthy' }
-        $out.Add(
-            (New-StsFinding -RunId $Context.RunId -Collector 'Performance' -Category 'CPU' -CheckId 'PERF-RUNNABLE' -CheckName 'Runnable task pressure' `
-                -TargetType 'Instance' -TargetName $Context.InstanceName -InstanceName $Context.InstanceName -State $schedState -Severity 'Medium' -Weight 5 `
-                -Message ("Max runnable tasks observed is {0}." -f $sched.max_runnable_tasks) `
-                -Evidence @{ MaxRunnableTasks = $sched.max_runnable_tasks; WarnThreshold = $cpuWarn } `
-                -Recommendation 'Sustained high runnable task counts can indicate CPU pressure.' -Source 'tsql')
-        )
-    } catch { }
+    $blockingCount = if ($null -ne $snapshot.BlockingCount) { [int]$snapshot.BlockingCount } else { 0 }
+    $maxRunnableTasks = if ($null -ne $snapshot.MaxRunnableTasks) { [int]$snapshot.MaxRunnableTasks } else { 0 }
+    $ple = if ($null -ne $snapshot.PLE) { [int]$snapshot.PLE } else { 0 }
 
-    try {
-        $ple = Invoke-StsQuery -SqlInstance $Context.InstanceName -SqlCredential $Context.SqlCredential -Query @"
-SELECT TOP (1) cntr_value
-FROM sys.dm_os_performance_counters
-WHERE counter_name = 'Page life expectancy';
-"@ | Select-Object -First 1
-        $pleState = if ($ple -and [int64]$ple.cntr_value -lt $pleWarn) { 'Warning' } else { 'Info' }
-        $out.Add(
-            (New-StsFinding -RunId $Context.RunId -Collector 'Performance' -Category 'Memory' -CheckId 'PERF-PLE' -CheckName 'Page life expectancy snapshot' `
-                -TargetType 'Instance' -TargetName $Context.InstanceName -InstanceName $Context.InstanceName -State $pleState -Severity 'Medium' -Weight 4 `
-                -Message ("PLE snapshot is {0}." -f $ple.cntr_value) `
-                -Evidence @{ PLE = $ple.cntr_value; WarnThreshold = $pleWarn } `
-                -Recommendation 'Interpret PLE carefully with NUMA and workload context. Use as one signal, not a verdict.' -Source 'tsql')
-        )
-    } catch { }
+    $commonEvidence = @{
+        InstanceName     = $Context.InstanceName
+        BlockingCount    = $blockingCount
+        MaxRunnableTasks = $maxRunnableTasks
+        PLE              = $ple
+        CpuRunnableWarn  = $cpuRunnableWarn
+        PLEWarn          = $pleWarn
+        WaitPctWarn      = $waitPctWarn
+    }
 
-    try {
-        $waits = Invoke-StsQuery -SqlInstance $Context.InstanceName -SqlCredential $Context.SqlCredential -Query @"
-;WITH waits AS (
-    SELECT wait_type, wait_time_ms,
-           SUM(wait_time_ms) OVER() AS total_ms
+    $durationMs = [int]((Get-Date) - $started).TotalMilliseconds
+
+    $blockingState = if ($blockingCount -gt 0) { 'Warning' } else { 'Healthy' }
+    $blockingMessage = if ($blockingCount -gt 0) { "$blockingCount active blocked request(s) detected." } else { 'No active blocked requests detected.' }
+
+    $findings.Add(
+        (New-StsFinding `
+            -RunId $Context.RunId `
+            -Collector 'Performance' `
+            -Category 'Blocking' `
+            -CheckId 'PERF-BLOCKING' `
+            -CheckName 'Blocking snapshot' `
+            -TargetType 'Instance' `
+            -TargetName $instanceName `
+            -InstanceName $instanceName `
+            -State $blockingState `
+            -Severity 'Info' `
+            -Weight 7 `
+            -Message $blockingMessage `
+            -Evidence $commonEvidence `
+            -Recommendation 'Investigate blocking chains if this condition persists.' `
+            -Source 'tsql' `
+            -DurationMs $durationMs)
+    )
+
+    $runnableState = if ($maxRunnableTasks -gt $cpuRunnableWarn) { 'Warning' } else { 'Healthy' }
+    $runnableMessage = "Max runnable tasks observed is $maxRunnableTasks."
+
+    $findings.Add(
+        (New-StsFinding `
+            -RunId $Context.RunId `
+            -Collector 'Performance' `
+            -Category 'CPU' `
+            -CheckId 'PERF-RUNNABLE' `
+            -CheckName 'Runnable task pressure' `
+            -TargetType 'Instance' `
+            -TargetName $instanceName `
+            -InstanceName $instanceName `
+            -State $runnableState `
+            -Severity 'Medium' `
+            -Weight 5 `
+            -Message $runnableMessage `
+            -Evidence $commonEvidence `
+            -Recommendation 'Sustained high runnable task counts can indicate CPU pressure.' `
+            -Source 'tsql' `
+            -DurationMs $durationMs)
+    )
+
+    $pleState = if ($ple -gt 0 -and $ple -lt $pleWarn) { 'Warning' } else { 'Info' }
+    $pleMessage = "PLE snapshot is $ple."
+
+    $findings.Add(
+        (New-StsFinding `
+            -RunId $Context.RunId `
+            -Collector 'Performance' `
+            -Category 'Memory' `
+            -CheckId 'PERF-PLE' `
+            -CheckName 'Page life expectancy snapshot' `
+            -TargetType 'Instance' `
+            -TargetName $instanceName `
+            -InstanceName $instanceName `
+            -State $pleState `
+            -Severity 'Medium' `
+            -Weight 4 `
+            -Message $pleMessage `
+            -Evidence $commonEvidence `
+            -Recommendation 'Interpret PLE carefully with NUMA and workload context. Use as one signal, not a verdict.' `
+            -Source 'tsql' `
+            -DurationMs $durationMs)
+    )
+
+    $waitQuery = @"
+SET NOCOUNT ON;
+
+WITH waits AS
+(
+    SELECT
+        wait_type,
+        wait_time_ms
     FROM sys.dm_os_wait_stats
-    WHERE wait_type NOT LIKE 'SLEEP%'
-      AND wait_type NOT IN ('BROKER_EVENTHANDLER','BROKER_RECEIVE_WAITFOR','BROKER_TASK_STOP','BROKER_TO_FLUSH','BROKER_TRANSMITTER','CHECKPOINT_QUEUE','CHKPT','CLR_AUTO_EVENT','CLR_MANUAL_EVENT','CLR_SEMAPHORE','DBMIRROR_DBM_EVENT','DBMIRROR_EVENTS_QUEUE','DBMIRROR_WORKER_QUEUE','DBMIRRORING_CMD','DIRTY_PAGE_POLL','DISPATCHER_QUEUE_SEMAPHORE','EXECSYNC','FSAGENT','FT_IFTS_SCHEDULER_IDLE_WAIT','FT_IFTSHC_MUTEX','HADR_CLUSAPI_CALL','HADR_FILESTREAM_IOMGR_IOCOMPLETION','HADR_LOGCAPTURE_WAIT','HADR_NOTIFICATION_DEQUEUE','HADR_TIMER_TASK','HADR_WORK_QUEUE','KSOURCE_WAKEUP','LAZYWRITER_SLEEP','LOGMGR_QUEUE','ONDEMAND_TASK_QUEUE','PWAIT_ALL_COMPONENTS_INITIALIZED','PWAIT_DIRECTLOGCONSUMER_GETNEXT','QDS_PERSIST_TASK_MAIN_LOOP_SLEEP','QDS_ASYNC_QUEUE','QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP','QDS_SHUTDOWN_QUEUE','REDO_THREAD_PENDING_WORK','REQUEST_FOR_DEADLOCK_SEARCH','RESOURCE_QUEUE','SERVER_IDLE_CHECK','SLEEP_BPOOL_FLUSH','SLEEP_DBSTARTUP','SLEEP_DCOMSTARTUP','SLEEP_MASTERDBREADY','SLEEP_MASTERMDREADY','SLEEP_MASTERUPGRADED','SLEEP_MSDBSTARTUP','SLEEP_SYSTEMTASK','SLEEP_TASK','SLEEP_TEMPDBSTARTUP','SNI_HTTP_ACCEPT','SP_SERVER_DIAGNOSTICS_SLEEP','SQLTRACE_BUFFER_FLUSH','SQLTRACE_INCREMENTAL_FLUSH_SLEEP','SQLTRACE_WAIT_ENTRIES','WAIT_FOR_RESULTS','WAITFOR','WAITFOR_TASKSHUTDOWN','WAIT_XTP_RECOVERY','WAIT_XTP_HOST_WAIT','WAIT_XTP_OFFLINE_CKPT_NEW_LOG','WAIT_XTP_CKPT_CLOSE','XE_DISPATCHER_JOIN','XE_DISPATCHER_WAIT','XE_TIMER_EVENT')
+    WHERE wait_type NOT IN
+    (
+        'SLEEP_TASK',
+        'BROKER_TASK_STOP',
+        'BROKER_TO_FLUSH',
+        'SQLTRACE_BUFFER_FLUSH',
+        'CLR_AUTO_EVENT',
+        'CLR_MANUAL_EVENT',
+        'LAZYWRITER_SLEEP',
+        'SLEEP_SYSTEMTASK',
+        'XE_TIMER_EVENT',
+        'XE_DISPATCHER_WAIT',
+        'FT_IFTS_SCHEDULER_IDLE_WAIT',
+        'LOGMGR_QUEUE',
+        'REQUEST_FOR_DEADLOCK_SEARCH',
+        'CHECKPOINT_QUEUE',
+        'BROKER_EVENTHANDLER',
+        'TRACEWRITE',
+        'WAITFOR',
+        'DBMIRROR_DBM_EVENT',
+        'DBMIRROR_EVENTS_QUEUE',
+        'BROKER_RECEIVE_WAITFOR',
+        'ONDEMAND_TASK_QUEUE',
+        'DIRTY_PAGE_POLL',
+        'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
+        'SP_SERVER_DIAGNOSTICS_SLEEP'
+    )
+      AND wait_time_ms > 0
 )
 SELECT TOP (5)
-    wait_type,
-    wait_time_ms,
-    CAST(CASE WHEN total_ms = 0 THEN 0 ELSE (wait_time_ms * 100.0 / total_ms) END AS decimal(10,2)) AS pct
+    wait_type AS WaitType,
+    wait_time_ms AS WaitMs,
+    CAST(wait_time_ms * 100.0 / NULLIF(SUM(wait_time_ms) OVER (),0) AS decimal(10,2)) AS WaitPct
 FROM waits
 ORDER BY wait_time_ms DESC;
 "@
-        foreach ($w in @($waits)) {
-            $state = if ([decimal]$w.pct -ge $waitWarn) { 'Warning' } else { 'Info' }
-            $out.Add(
-                (New-StsFinding -RunId $Context.RunId -Collector 'Performance' -Category 'Waits' -CheckId 'PERF-WAITS' -CheckName 'Top wait category' `
-                    -TargetType 'WaitType' -TargetName $w.wait_type -InstanceName $Context.InstanceName -State $state -Severity 'Medium' -Weight 3 `
-                    -Message ("Top wait {0} represents {1}% of sampled cumulative waits." -f $w.wait_type, $w.pct) `
-                    -Evidence @{ WaitType = $w.wait_type; WaitMs = $w.wait_time_ms; Percent = $w.pct; WarnPct = $waitWarn } `
-                    -Recommendation 'Use waits as directional evidence. Correlate with CPU, I/O, blocking, and workload timing.' -Source 'tsql')
-            )
-        }
-    } catch { }
 
-    $out
+    try { $waitRows = @(Invoke-StsQuery -Context $Context -Query $waitQuery) }
+    catch { $waitRows = @() }
+
+    foreach ($row in $waitRows) {
+        $waitType = [string]$row.WaitType
+        $waitMs = if ($null -ne $row.WaitMs) { [int64]$row.WaitMs } else { 0 }
+        $waitPct = if ($null -ne $row.WaitPct) { [double]$row.WaitPct } else { 0 }
+
+        $waitEvidence = @{
+            InstanceName = $Context.InstanceName
+            WaitType     = $waitType
+            WaitMs       = $waitMs
+            Percent      = $waitPct
+            WarnPct      = $waitPctWarn
+        }
+
+        $waitState = if ($waitPct -gt $waitPctWarn) { 'Warning' } else { 'Info' }
+        $waitMessage = "Top wait $waitType represents $waitPct% of sampled cumulative waits."
+
+        $findings.Add(
+            (New-StsFinding `
+                -RunId $Context.RunId `
+                -Collector 'Performance' `
+                -Category 'Waits' `
+                -CheckId 'PERF-WAITS' `
+                -CheckName 'Top wait category' `
+                -TargetType 'WaitType' `
+                -TargetName $waitType `
+                -InstanceName $instanceName `
+                -State $waitState `
+                -Severity 'Medium' `
+                -Weight 3 `
+                -Message $waitMessage `
+                -Evidence $waitEvidence `
+                -Recommendation 'Use waits as directional evidence. Correlate with CPU, I/O, blocking, and workload timing.' `
+                -Source 'tsql' `
+                -DurationMs $durationMs)
+        )
+    }
+
+    return @($findings)
 }

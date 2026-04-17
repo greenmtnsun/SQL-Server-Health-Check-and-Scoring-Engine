@@ -1,3 +1,4 @@
+
 function Invoke-StsCollectorAgIntelligence {
     [CmdletBinding()]
     param([hashtable]$Context, [hashtable]$Check)

@@ -1,30 +1,183 @@
+# STS:
+# FileVersion: 1.0.1
+# RequiresModuleVersion: 6.9.0
 
 function Invoke-StsCollectorErrorLog {
     [CmdletBinding()]
-    param([hashtable]$Context, [hashtable]$Check)
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Check
+    )
 
-    if (-not (Get-Command Get-DbaErrorLog -ErrorAction SilentlyContinue)) {
-        New-StsFinding -RunId $Context.RunId -Collector 'ErrorLog' -Category 'ErrorLog' -CheckId 'ERRORLOG-SCAN' -CheckName 'Error log scan' `
-            -TargetType 'Instance' -TargetName $Context.InstanceName -InstanceName $Context.InstanceName -State 'Unknown' -Severity 'Medium' -Weight 6 `
-            -Message 'Get-DbaErrorLog not available.' -Evidence @{} -Recommendation 'Install or import dbatools.' -Source 'engine'
-        return
+    $instanceName = [string]$Context.InstanceName
+    $settings = $Context.Settings
+
+    $lookbackHours = if ($settings.ContainsKey('ErrorLogLookbackHours')) {
+        [int]$settings.ErrorLogLookbackHours
+    } else {
+        72
     }
 
-    $since = (Get-Date).AddHours(-1 * [int]$Context.Settings.ErrorLogLookbackHours)
-    $logs = Get-DbaErrorLog -SqlInstance $Context.InstanceName -SqlCredential $Context.SqlCredential -After $since -EnableException |
-        Where-Object { $_.Text -match 'error|severity|i/o|fail|corrupt|stack|assert|deadlock' }
+    $started = Get-Date
+    $since = (Get-Date).AddHours(-1 * $lookbackHours)
+    $findings = New-Object System.Collections.Generic.List[object]
 
-    if (-not $logs) {
-        New-StsFinding -RunId $Context.RunId -Collector 'ErrorLog' -Category 'ErrorLog' -CheckId 'ERRORLOG-SCAN' -CheckName 'Error log scan' `
-            -TargetType 'Instance' -TargetName $Context.InstanceName -InstanceName $Context.InstanceName -State 'Healthy' -Severity 'Info' -Weight 6 `
-            -Message 'No notable error log patterns found in lookback window.' -Evidence @{ LookbackHours = $Context.Settings.ErrorLogLookbackHours } `
-            -Recommendation 'None.' -Source 'dbatools'
-        return
+    $patterns = @(
+        @{ Name = 'stack dump'; Pattern = 'stack dump' },
+        @{ Name = 'assert'; Pattern = '\bassert\b' },
+        @{ Name = 'corruption'; Pattern = '\b(corrupt|corruption)\b' },
+        @{ Name = 'i/o error'; Pattern = '\bi/o error\b' },
+        @{ Name = 'severity 20+'; Pattern = '\bseverity[: ]+(2[0-5])\b' },
+        @{ Name = 'deadlock'; Pattern = '\bdeadlock\b' }
+    )
+
+    try {
+        if (-not $Context.HasDbatools) {
+            throw "dbatools is required for the current ErrorLog collector implementation."
+        }
+
+        $elogParams = @{
+            SqlInstance = $instanceName
+            After       = $since
+            ErrorAction = 'Stop'
+        }
+
+        if ($Context.PSObject.Properties['SqlCredential'] -and $null -ne $Context.SqlCredential) {
+            $elogParams.SqlCredential = $Context.SqlCredential
+        }
+
+        $logRows = @(Get-DbaErrorLog @elogParams)
+    }
+    catch {
+        $evidence = @{
+            InstanceName  = $Context.InstanceName
+            LookbackHours = $lookbackHours
+            Since         = $since
+            Error         = $_.Exception.Message
+        }
+
+        return New-StsFinding `
+            -RunId $Context.RunId `
+            -Collector 'ErrorLog' `
+            -Category 'ErrorLog' `
+            -CheckId 'ERRORLOG-SCAN' `
+            -CheckName 'Error log scan' `
+            -TargetType 'Instance' `
+            -TargetName $instanceName `
+            -InstanceName $instanceName `
+            -State 'Unknown' `
+            -Severity 'High' `
+            -Weight 6 `
+            -Message 'Error log scan failed.' `
+            -Evidence $evidence `
+            -Recommendation 'Validate dbatools availability, connectivity, and permission to read SQL error logs.' `
+            -Source 'dbatools' `
+            -DurationMs ([int]((Get-Date) - $started).TotalMilliseconds) `
+            -ErrorId 'ERRORLOG-SCAN-FAILED' `
+            -ErrorMessage $_.Exception.Message
     }
 
-    $sample = ($logs | Select-Object -First 3 | ForEach-Object { $_.Text }) -join ' | '
-    New-StsFinding -RunId $Context.RunId -Collector 'ErrorLog' -Category 'ErrorLog' -CheckId 'ERRORLOG-SCAN' -CheckName 'Error log scan' `
-        -TargetType 'Instance' -TargetName $Context.InstanceName -InstanceName $Context.InstanceName -State 'Warning' -Severity 'Medium' -Weight 6 `
-        -Message 'Potentially important patterns found in SQL error log.' -Evidence @{ LookbackHours = $Context.Settings.ErrorLogLookbackHours; Sample = $sample } `
-        -Recommendation 'Review full error log output and correlate with jobs, storage, and HA findings.' -Source 'dbatools'
+    $matches = New-Object System.Collections.Generic.List[object]
+
+    foreach ($row in @($logRows)) {
+        $text = ''
+        $logDate = $null
+        $processInfo = $null
+
+        if ($row.PSObject.Properties['Text']) {
+            $text = [string]$row.Text
+        }
+        elseif ($row.PSObject.Properties['Message']) {
+            $text = [string]$row.Message
+        }
+
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+
+        if ($row.PSObject.Properties['LogDate']) {
+            try { $logDate = [datetime]$row.LogDate } catch { $logDate = $null }
+        }
+
+        if ($row.PSObject.Properties['ProcessInfo']) {
+            try { $processInfo = [string]$row.ProcessInfo } catch { $processInfo = $null }
+        }
+
+        foreach ($rule in $patterns) {
+            try {
+                if ($text -match $rule.Pattern) {
+                    $matches.Add([pscustomobject]@{
+                        Pattern     = [string]$rule.Name
+                        LogDate     = $logDate
+                        ProcessInfo = $processInfo
+                        MessageText = $text
+                    })
+                    break
+                }
+            }
+            catch {
+                continue
+            }
+        }
+    }
+
+    $matchCount = @($matches).Count
+
+    $topPatterns = @(
+        $matches |
+        Group-Object Pattern |
+        Sort-Object Count -Descending |
+        Select-Object -First 5 |
+        ForEach-Object { "{0} ({1})" -f $_.Name, $_.Count }
+    )
+
+    $sampleMessages = @(
+        $matches |
+        Select-Object -First 3 |
+        ForEach-Object {
+            $msg = [string]$_.MessageText
+            if ($msg.Length -gt 180) { $msg.Substring(0,180) + '...' } else { $msg }
+        }
+    )
+
+    $state = 'Healthy'
+    $severity = 'Info'
+    $message = 'No curated high-signal error log patterns found in lookback window.'
+    $recommendation = 'None.'
+
+    if ($matchCount -gt 0) {
+        $state = 'Warning'
+        $severity = 'Medium'
+        $message = "Found $matchCount curated high-signal error log match(es) in the last $lookbackHours hour(s)."
+        $recommendation = 'Review the matched log entries and confirm whether they indicate active operational problems.'
+    }
+
+    $evidence = @{
+        InstanceName   = $Context.InstanceName
+        LookbackHours  = $lookbackHours
+        Since          = $since
+        MatchCount     = $matchCount
+        TopPatterns    = ($topPatterns -join '; ')
+        SampleMessages = ($sampleMessages -join ' | ')
+    }
+
+    $findings.Add(
+        (New-StsFinding `
+            -RunId $Context.RunId `
+            -Collector 'ErrorLog' `
+            -Category 'ErrorLog' `
+            -CheckId 'ERRORLOG-SCAN' `
+            -CheckName 'Error log scan' `
+            -TargetType 'Instance' `
+            -TargetName $instanceName `
+            -InstanceName $instanceName `
+            -State $state `
+            -Severity $severity `
+            -Weight 6 `
+            -Message $message `
+            -Evidence $evidence `
+            -Recommendation $recommendation `
+            -Source 'dbatools' `
+            -DurationMs ([int]((Get-Date) - $started).TotalMilliseconds))
+    )
+
+    return @($findings)
 }
