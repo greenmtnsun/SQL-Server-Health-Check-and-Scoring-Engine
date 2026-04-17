@@ -1,0 +1,5 @@
+Hotfix v2:
+- Invoke-StsQuery no longer passes -TrustServerCertificate to Invoke-DbaQuery
+- Invoke-StsQuery still supports both -Context and direct parameter styles
+- ErrorLog collector hardened for dbatools return-shape mismatches
+- Keeps root files, versioning, manifest, and package validation

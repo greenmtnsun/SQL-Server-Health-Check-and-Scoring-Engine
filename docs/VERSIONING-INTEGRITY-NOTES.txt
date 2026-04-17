@@ -1,0 +1,13 @@
+This bundle adds semantic versioning and package integrity checks.
+Added:
+- SqlTechnicalSanity.manifest.json
+- Public/Test-SqlTechnicalSanityPackage.ps1
+- Public/Get-SqlTechnicalSanityVersion.ps1
+- Private/Core/Get-StsModuleVersion.ps1
+Updated:
+- SqlTechnicalSanity.psd1 -> ModuleVersion 6.9.0
+- SqlTechnicalSanity.psm1 -> load version/integrity commands
+- Key files now include lightweight headers:
+  # STS:
+  # FileVersion: 1.0.0
+  # RequiresModuleVersion: 6.9.0

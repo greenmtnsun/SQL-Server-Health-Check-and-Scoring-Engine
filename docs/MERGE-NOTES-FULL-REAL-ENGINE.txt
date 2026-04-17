@@ -1,0 +1,5 @@
+Built from SqlTechnicalSanity-Most Likely ALL.zip as the preserved real-engine base.
+Overlaid parse-safe config/bootstrap files from SqlTechnicalSanity_v6_8_5_full_rebuild.zip.
+Overlaid locked patches from SqlTechnicalSanity_patch_bundle_baseline_then_html.zip.
+This is intended as a richer full release bundle, not a minimal shell.
+Recommended first run: import module, run Example-Run.ps1, then inspect HTML/JSON output.
