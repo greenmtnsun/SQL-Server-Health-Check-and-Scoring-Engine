@@ -1,3 +1,6 @@
+# STS:
+# FileVersion: 1.0.0
+# RequiresModuleVersion: 6.9.0
 
 function Invoke-SqlTechnicalSanity {
     [CmdletBinding()]
@@ -11,26 +14,31 @@ function Invoke-SqlTechnicalSanity {
 
     try {
         $settings = Get-StsSettings
-    } catch {
+    }
+    catch {
         throw "Failed to load settings. $($_.Exception.Message)"
     }
 
-    $run = Initialize-StsRun -SqlInstance $SqlInstance -SqlCredential $SqlCredential -Settings $settings
+    $run = Initialize-StsRun -SqlInstance $SqlInstance -SqlCredential $SqlCredential -Settings $settings.Thresholds
     $registry = Get-StsCheckRegistry
     $allFindings = New-Object 'System.Collections.Generic.List[object]'
 
     foreach ($instance in $SqlInstance) {
+        $sqlInstanceFullName = [string]$instance
+
         $context = @{
-            RunId         = $run.RunId
-            InstanceName  = $instance
-            SqlCredential = $SqlCredential
-            Settings      = $settings.Thresholds
-            FullSettings  = $settings
-            HasDbatools   = $run.HasDbatools
+            RunId               = $run.RunId
+            InstanceName        = $instance
+            SqlCredential       = $SqlCredential
+            Settings            = $settings.Thresholds
+            FullSettings        = $settings
+            HasDbatools         = $run.HasDbatools
+            SqlInstanceFullName = $sqlInstanceFullName
         }
 
         foreach ($check in $registry) {
             $fn = Get-Command -Name $check.Function -ErrorAction SilentlyContinue
+
             if (-not $fn) {
                 $allFindings.Add(
                     (New-StsFinding `
@@ -46,7 +54,10 @@ function Invoke-SqlTechnicalSanity {
                         -Severity 'High' `
                         -Weight $check.Weight `
                         -Message "Collector function missing: $($check.Function)" `
-                        -Evidence @{} `
+                        -Evidence @{
+                            InstanceName        = $instance
+                            SqlInstanceFullName = $sqlInstanceFullName
+                        } `
                         -Recommendation 'Fix module packaging.' `
                         -Source 'engine')
                 )
@@ -64,8 +75,8 @@ function Invoke-SqlTechnicalSanity {
     }
 
     $findingsArray = @($allFindings.ToArray())
-
     $score = Get-StsScores -Findings $findingsArray -Settings $settings
+
     $html = ConvertTo-SqlTechnicalSanityHtml `
         -Run $run `
         -Findings $findingsArray `
@@ -91,7 +102,8 @@ function Invoke-SqlTechnicalSanity {
             HtmlPath = $export.HtmlPath
             JsonPath = $export.JsonPath
         }
-    } else {
+    }
+    else {
         $export
     }
 }

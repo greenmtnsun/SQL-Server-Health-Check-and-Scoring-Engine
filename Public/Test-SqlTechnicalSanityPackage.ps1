@@ -1,53 +1,88 @@
+# STS:
+# FileVersion: 1.0.0
+# RequiresModuleVersion: 6.9.0
 
 function Test-SqlTechnicalSanityPackage {
     [CmdletBinding()]
     param()
 
-    $requiredFiles = @(
-        'SqlTechnicalSanity.psm1',
-        'SqlTechnicalSanity.psd1',
-        'Config\Defaults.psd1',
-        'Private\Core\New-StsFinding.ps1',
-        'Private\Core\Initialize-StsRun.ps1',
-        'Private\Core\Invoke-StsFailSoft.ps1',
-        'Private\Core\Invoke-StsQuery.ps1',
-        'Private\Core\Get-StsCheckRegistry.ps1',
-        'Private\Core\Get-StsScores.ps1',
-        'Public\Invoke-SqlTechnicalSanity.ps1',
-        'Public\ConvertTo-SqlTechnicalSanityHtml.ps1',
-        'Public\ConvertTo-SqlTechnicalSanityJson.ps1',
-        'Public\Export-SqlTechnicalSanityReport.ps1',
-        'Public\Get-SqlTechnicalSanityCollector.ps1',
-        'Public\Get-SqlTechnicalSanityCheck.ps1',
-        'Public\Test-SqlTechnicalSanityPackage.ps1',
-        'Private\Collectors\Instance.Collector.ps1',
-        'Private\Collectors\Databases.Collector.ps1',
-        'Private\Collectors\Backups.Collector.ps1',
-        'Private\Collectors\Jobs.Collector.ps1',
-        'Private\Collectors\HaDr.Collector.ps1',
-        'Private\Collectors\Storage.Collector.ps1',
-        'Private\Collectors\Security.Collector.ps1',
-        'Private\Collectors\Performance.Collector.ps1',
-        'Private\Collectors\Replication.Collector.ps1',
-        'Private\Collectors\TempDb.Collector.ps1',
-        'Private\Collectors\ErrorLog.Collector.ps1',
-        'Private\Collectors\Shares.Collector.ps1',
-        'Private\Collectors\FileLayout.Collector.ps1',
-        'README.md',
-        'Example-Run.ps1',
-        'FILELIST.txt'
-    )
+    $moduleRoot = Split-Path -Parent $PSScriptRoot
+    $manifestJsonPath = Join-Path $moduleRoot 'SqlTechnicalSanity.manifest.json'
+    $moduleVersion = Get-StsModuleVersion
 
-    $root = Split-Path -Parent $script:ModuleRoot
-    $missing = foreach ($f in $requiredFiles) {
-        if (-not (Test-Path -LiteralPath (Join-Path $script:ModuleRoot $f))) { $f }
+    $result = [ordered]@{
+        ModuleRoot        = $moduleRoot
+        ModuleVersion     = $moduleVersion
+        ExpectedFileCount = 0
+        ActualFileCount   = 0
+        MissingFiles      = @()
+        HashMismatch      = @()
+        VersionHeaderWarn = @()
+        Passed            = $true
     }
 
-    [pscustomobject]@{
-        ModuleRoot    = $script:ModuleRoot
-        RequiredCount = $requiredFiles.Count
-        MissingCount  = @($missing).Count
-        MissingFiles  = @($missing)
-        Passed        = (@($missing).Count -eq 0)
+    if (-not (Test-Path -LiteralPath $manifestJsonPath)) {
+        Write-Verbose "Manifest JSON missing: $manifestJsonPath"
+        $result.Passed = $false
+        return [pscustomobject]$result
     }
+
+    $manifest = Get-Content -LiteralPath $manifestJsonPath -Raw | ConvertFrom-Json
+    $result.ExpectedFileCount = [int]$manifest.ExpectedFileCount
+    $allFiles = @(Get-ChildItem -LiteralPath $moduleRoot -Recurse -File)
+    $result.ActualFileCount = $allFiles.Count
+
+    foreach ($req in @($manifest.RequiredFiles)) {
+        $reqPath = Join-Path $moduleRoot $req
+        if (-not (Test-Path -LiteralPath $reqPath)) {
+            $result.MissingFiles += $req
+            $result.Passed = $false
+        }
+    }
+
+    foreach ($prop in $manifest.Hashes.PSObject.Properties) {
+        $path = Join-Path $moduleRoot $prop.Name
+        if (Test-Path -LiteralPath $path) {
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            if ($hash -ne $prop.Value) {
+                $result.HashMismatch += $prop.Name
+                $result.Passed = $false
+            }
+        }
+    }
+
+    foreach ($file in $allFiles | Where-Object Extension -eq '.ps1') {
+        $top = Get-Content -LiteralPath $file.FullName -First 6 -ErrorAction SilentlyContinue
+        $joined = ($top -join "`n")
+        if ($joined -match 'RequiresModuleVersion:\s*([0-9]+\.[0-9]+\.[0-9]+)') {
+            try {
+                $reqVer = [version]$Matches[1]
+                if ($reqVer -gt ([version]$moduleVersion)) {
+                    $result.VersionHeaderWarn += $file.FullName.Replace($moduleRoot + '\','')
+                    $result.Passed = $false
+                }
+            } catch {
+                $result.VersionHeaderWarn += $file.FullName.Replace($moduleRoot + '\','')
+                $result.Passed = $false
+            }
+        }
+    }
+
+    if ($result.ExpectedFileCount -ne $result.ActualFileCount) {
+        Write-Verbose ("File count mismatch. Expected {0}, actual {1}" -f $result.ExpectedFileCount, $result.ActualFileCount)
+    }
+
+    if ($result.MissingFiles.Count -gt 0) {
+        Write-Verbose ("Missing files: " + ($result.MissingFiles -join ', '))
+    }
+
+    if ($result.HashMismatch.Count -gt 0) {
+        Write-Verbose ("Hash mismatches: " + ($result.HashMismatch -join ', '))
+    }
+
+    if ($result.VersionHeaderWarn.Count -gt 0) {
+        Write-Verbose ("Version header warnings: " + ($result.VersionHeaderWarn -join ', '))
+    }
+
+    [pscustomobject]$result
 }

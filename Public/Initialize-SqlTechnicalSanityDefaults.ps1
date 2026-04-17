@@ -1,3 +1,7 @@
+# STS:
+# FileVersion: 1.0.0
+# RequiresModuleVersion: 6.9.0
+
 function Initialize-SqlTechnicalSanityDefaults {
     [CmdletBinding()]
     param(
@@ -17,7 +21,7 @@ function Initialize-SqlTechnicalSanityDefaults {
     $defaultsPath = Join-Path $configDir 'Defaults.psd1'
     $ignorePath   = Join-Path $configDir 'IgnoreRules.psd1'
 
-    $defaultsContent = @"
+    $defaultsContent = @'
 @{
     Thresholds = @{
         FullBackupWarnHours         = 30
@@ -55,7 +59,7 @@ function Initialize-SqlTechnicalSanityDefaults {
         Critical = 0.00
         Unknown  = 0.50
         Skipped  = 0.50
-        Ignored  = $null
+        Ignored  = 0
     }
 
     DomainWeights = @{
@@ -76,13 +80,13 @@ function Initialize-SqlTechnicalSanityDefaults {
         Shares          = 1.0
     }
 }
-"@
+'@
 
-    $ignoreContent = @"
+    $ignoreContent = @'
 @{
     Rules = @()
 }
-"@
+'@
 
     if ($Force -or -not (Test-Path -LiteralPath $defaultsPath)) {
         Set-Content -LiteralPath $defaultsPath -Value $defaultsContent -Encoding UTF8
